@@ -1,0 +1,85 @@
+{
+  "url": "http://127.0.0.1:8765/",
+  "failures": [],
+  "consoleErrors": [],
+  "pageErrors": [],
+  "requestsFailed": [],
+  "checks": [
+    {
+      "name": "Real frame image renders in both canvases",
+      "passed": true
+    },
+    {
+      "name": "DriveLM retained counts reflect the actual same budget",
+      "passed": true
+    },
+    {
+      "name": "Next, previous, and direct frame scrubbing",
+      "passed": true
+    },
+    {
+      "name": "Original and difference views, grid, and opacity work",
+      "passed": true
+    },
+    {
+      "name": "Collection switching updates frames",
+      "passed": true
+    },
+    {
+      "name": "Displayed overlap is computed from actual saved token IDs",
+      "passed": true
+    },
+    {
+      "name": "Keyboard controls and wraparound boundaries",
+      "passed": true
+    },
+    {
+      "name": "Camera allocation displays real six-view counts",
+      "passed": true
+    },
+    {
+      "name": "Hover shows the token ID at the actual grid coordinate",
+      "passed": true
+    },
+    {
+      "name": "DriveLMM-o1 switches to real 25 / 256 selections",
+      "passed": true
+    },
+    {
+      "name": "Explicit play/pause advances then stops",
+      "passed": true
+    },
+    {
+      "name": "Desktop page has no horizontal overflow",
+      "passed": true
+    },
+    {
+      "name": "Four actual clip previews and selection downloads",
+      "passed": true
+    },
+    {
+      "name": "Gallery filtering, animated WebP, and opening a collection",
+      "passed": true
+    },
+    {
+      "name": "Result tables show supported values and citation can be copied",
+      "passed": true
+    },
+    {
+      "name": "Mobile page has no horizontal overflow",
+      "passed": true
+    },
+    {
+      "name": "Mobile navigation opens and closes after a section link",
+      "passed": true
+    },
+    {
+      "name": "Reduced motion does not autoplay the frame collection",
+      "passed": true
+    },
+    {
+      "name": "No browser exceptions or unavailable assets",
+      "passed": true
+    }
+  ]
+}

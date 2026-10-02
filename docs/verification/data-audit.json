@@ -1,0 +1,62 @@
+{
+  "datasets": [
+    {
+      "id": "drivelm",
+      "collections": [
+        {
+          "id": "collection-1",
+          "frames": 64,
+          "gif_frames": 64,
+          "gif_duration_ms": 28800,
+          "retained_per_method": 426,
+          "visual_input_tokens": 4374,
+          "ours_only_min": 390,
+          "ours_only_max": 416,
+          "ours_only_mean": 404.59
+        },
+        {
+          "id": "collection-2",
+          "frames": 64,
+          "gif_frames": 64,
+          "gif_duration_ms": 28800,
+          "retained_per_method": 426,
+          "visual_input_tokens": 4374,
+          "ours_only_min": 391,
+          "ours_only_max": 417,
+          "ours_only_mean": 404.58
+        }
+      ]
+    },
+    {
+      "id": "drivelmm",
+      "collections": [
+        {
+          "id": "collection-1",
+          "frames": 64,
+          "gif_frames": 64,
+          "gif_duration_ms": 28800,
+          "retained_per_method": 25,
+          "visual_input_tokens": 256,
+          "ours_only_min": 20,
+          "ours_only_max": 25,
+          "ours_only_mean": 23.12
+        },
+        {
+          "id": "collection-2",
+          "frames": 64,
+          "gif_frames": 64,
+          "gif_duration_ms": 28800,
+          "retained_per_method": 25,
+          "visual_input_tokens": 256,
+          "ours_only_min": 20,
+          "ours_only_max": 25,
+          "ours_only_mean": 22.88
+        }
+      ]
+    }
+  ],
+  "total_frames": 256,
+  "total_gifs": 4,
+  "all_assets_exist": true,
+  "published_clip_checksums_verified": 16
+}

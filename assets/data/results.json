@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "paper": {
+    "title": "Map2Select: A Training-Free HD-Map Plug-In for Visual Token Selection in Driving VLMs",
+    "subtitle": "Let the map guide what the model sees.",
+    "abstract": "Map2Select uses projected HD maps as an external compute prior to retain complementary visual evidence at a fixed token budget, without adding map tokens or retraining the VLM. Map semantics guide a weighted feature-space coreset, while marginal utility allocates tokens across camera views. The result is a compact set of visual tokens that balances scene coverage and driving relevance.",
+    "code": "https://github.com/Elapsedf/Map2Select.github.io",
+    "pdf": null,
+    "supplement": null,
+    "citation": "@misc{map2select2026,\n  title = {Map2Select: A Training-Free HD-Map Plug-In for Visual Token Selection in Driving VLMs},\n  author = {Anonymous},\n  year = {2026},\n  note = {Research manuscript}\n}",
+    "version_note": "Based on the frozen Map2Select manuscript and supported evaluation artifacts from July 2026."
+  },
+  "datasets": [
+    {
+      "id": "drivelm",
+      "label": "DriveLM",
+      "model": "DriveMM · Llama-3.1-8B",
+      "metric": "Average",
+      "unit": "points",
+      "protocol": "15,480 official test questions. Values are from returned DriveLM evaluator score files; this page does not run an evaluator.",
+      "budget_note": "Nominal 10% = 426 / 4,374 visual tokens; nominal 25% = 1,074 / 4,374. The six camera views start with 729 tokens each.",
+      "rows": [
+        {"method": "Vanilla", "budget": "100%", "value": 59.166492, "scope": "official returned score"},
+        {"method": "Prune2Drive", "budget": "10%", "value": 57.087828, "scope": "official returned score"},
+        {"method": "Map2Select", "budget": "10%", "value": 58.272446, "ours": true, "scope": "official returned score", "note": "Exact coreset; semantic-ratio density; marginal view allocation."},
+        {"method": "Prune2Drive", "budget": "25%", "value": 58.158928, "scope": "official returned score"},
+        {"method": "Map2Select", "budget": "25%", "value": 58.833138, "ours": true, "scope": "official returned score", "note": "Exact coreset; semantic-ratio density; marginal view allocation."}
+      ],
+      "comparison_note": "At nominal 10%, Map2Select improves the matched Prune2Drive point estimate by 1.185 Average points. The full-token Vanilla reference remains higher.",
+      "source": "Returned evaluator artifacts indexed by the frozen Map2Select result reconstruction."
+    },
+    {
+      "id": "drivelmm",
+      "label": "DriveLMM-o1",
+      "model": "InternVL2.5-8B driving checkpoint",
+      "metric": "Overall",
+      "unit": "points",
+      "protocol": "4,634 full test questions. Official-format gpt-4o-mini judge. All listed runs have zero inference failures.",
+      "budget_note": "Nominal 10% = 25 / 256 visual tokens (9.765625%); 25% = 64 / 256. The strict baseline prunes after decoder layer 0 during prefill.",
+      "rows": [
+        {"method": "Vanilla", "budget": "100%", "value": 74.369530, "scope": "full test, official-format judge"},
+        {"method": "Strict Prune2Drive", "budget": "10%", "value": 72.587527, "scope": "full test, official-format judge"},
+        {"method": "Map2Select", "budget": "10%", "value": 73.018407, "ours": true, "scope": "full test, official-format judge", "note": "Exact coreset; semantic-ratio density; marginal view allocation."},
+        {"method": "Strict Prune2Drive", "budget": "25%", "value": 73.155114, "scope": "full test, official-format judge"},
+        {"method": "Map2Select", "budget": "25%", "value": 73.303841, "ours": true, "scope": "full test, official-format judge", "note": "Exact coreset; semantic-ratio density; marginal view allocation."}
+      ],
+      "comparison_note": "The exact coreset has higher point estimates than the strict baseline at both budgets. The paired 95% bootstrap intervals include zero; these differences are not claimed as statistically significant.",
+      "source": "Full-test judge summaries and paired bootstrap statistics indexed by the frozen Map2Select result reconstruction."
+    }
+  ],
+  "method": {
+    "steps": [
+      {"title": "Project the map", "description": "Use the ego pose and camera calibration to project HD-map semantics into each view. Pool the driving relevance signals onto the model's visual token grid."},
+      {"title": "Weight visual coverage", "description": "Convert keep and drop priors to semantic density: μᵢ ∝ (1 + p_keepᵢ) / (1 + p_dropᵢ), normalized to mean one. Select a coreset that covers the normalized visual features with these weights."},
+      {"title": "Allocate across views", "description": "Assign the fixed token budget according to the marginal gain in weighted coverage. Cameras can receive different numbers of tokens while preserving the total budget."},
+      {"title": "Use the existing VLM", "description": "Pass the retained visual tokens to the driving VLM. Selection requires no task-specific retraining and introduces no extra map tokens."}
+    ],
+    "objective": "minimize ∑ᵢ μᵢ minⱼ∈S ‖zᵢ − zⱼ‖², subject to |S| = K",
+    "caption": "The map supplies a prior over visual evidence; the coreset also accounts for feature diversity. Rectangles in the demo are selected visual tokens, not object detections or predicted lane boxes."
+  },
+  "claims": [
+    {"value": "≈10%", "label": "visual tokens retained", "note": "Matched nominal 10% content budgets in the two main benchmarks."},
+    {"value": "+1.185", "label": "DriveLM Average", "note": "Exact Map2Select versus Prune2Drive at nominal 10%; official returned scores."},
+    {"value": "+0.431", "label": "DriveLMM-o1 Overall", "note": "Exact Map2Select versus strict Prune2Drive at nominal 10%; point estimate."},
+    {"value": "0", "label": "training steps", "note": "A plug-in selector for an existing driving VLM."}
+  ],
+  "reported_efficiency": {
+    "scope": "Frozen manuscript text only; RTX 5090; cached map priors. Matching raw profiler logs are not available. These are reported measurements, not a new demo benchmark. Online map construction is excluded from these speedups.",
+    "rows": [
+      {"dataset": "DriveLM", "budget": "10%", "latency_ms": 493.323, "speedup": 3.0436},
+      {"dataset": "DriveLM", "budget": "25%", "latency_ms": 644.552, "speedup": 2.3295},
+      {"dataset": "DriveLMM-o1", "budget": "10%", "latency_ms": 683.518, "speedup": 1.9323},
+      {"dataset": "DriveLMM-o1", "budget": "25%", "latency_ms": 821.251, "speedup": 1.6089}
+    ]
+  }
+}
