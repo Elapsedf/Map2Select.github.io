@@ -30,6 +30,11 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
   try {
     await page.goto(baseURL, {waitUntil: 'networkidle'});
     await page.waitForFunction(() => document.querySelector('#token-explorer')?.getAttribute('aria-busy') === 'false', {timeout: 25000});
+    const dataResponse = await context.request.get(new URL('assets/data/demo.json', baseURL).href);
+    assert.equal(dataResponse.status(), 200);
+    const demo = await dataResponse.json();
+    const driveLM = demo.datasets.find(d => d.id === 'drivelm');
+    const firstMax = driveLM.sequences[0].frames.length - 1;
     await check('Real frame image renders in both canvases', async () => {
       const canvases = await page.locator('.comparison-stage canvas').evaluateAll(nodes => nodes.map(node => {
         const p = node.getContext('2d').getImageData(0, 0, node.width, node.height).data;
@@ -44,15 +49,16 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
       assert.match(await page.locator('#baseline-count').innerText(), /426/);
       assert.match(await page.locator('#ours-count').innerText(), /426/);
       assert.equal(await page.locator('#sequence-select option').count(), 2);
-      assert.equal(await page.locator('#frame-slider').getAttribute('max'), '63');
+      assert.equal(await page.locator('#frame-slider').getAttribute('max'), String(firstMax));
     });
     await check('Next, previous, and direct frame scrubbing', async () => {
       await page.locator('#next-frame').click();
       assert.equal(await page.locator('#frame-slider').inputValue(), '1');
       await page.locator('#previous-frame').click();
       assert.equal(await page.locator('#frame-slider').inputValue(), '0');
-      await page.locator('#frame-slider').fill('31');
-      assert.match(await page.locator('#frame-counter').innerText(), /32/);
+      const middle = Math.floor(firstMax / 2);
+      await page.locator('#frame-slider').fill(String(middle));
+      assert.equal(await page.locator('#frame-counter').innerText(), `${String(middle + 1).padStart(2, '0')} / ${firstMax + 1}`);
     });
     await check('Original and difference views, grid, and opacity work', async () => {
       for (const view of ['raw', 'difference', 'selected']) {
@@ -66,32 +72,52 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
       await page.locator('#show-grid').uncheck();
       await page.locator('#overlay-opacity').fill('45');
     });
-    await check('Collection switching updates frames', async () => {
+    await check('Unselected driving context stays bright', async () => {
+      const luminance = () => page.locator('.comparison-stage canvas').evaluateAll(nodes => nodes.map(canvas => {
+        const p = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let total = 0, count = 0;
+        for (let i = 0; i < p.length; i += 16) { total += .2126 * p[i] + .7152 * p[i + 1] + .0722 * p[i + 2]; count++; }
+        return total / count;
+      }));
+      for (const dataset of demo.datasets) {
+        await page.getByRole('tab', {name: dataset.label, exact: true}).click();
+        await page.waitForFunction(() => document.querySelector('#token-explorer').getAttribute('aria-busy') === 'false');
+        await page.locator('[data-view="raw"]').click();
+        const original = await luminance();
+        await page.locator('[data-view="selected"]').click();
+        const selected = await luminance();
+        assert(selected.every((value, index) => value / original[index] > .8), `${dataset.label} obscures too much driving context`);
+      }
+      await page.getByRole('tab', {name: 'DriveLM', exact: true}).click();
+    });
+    await check('Sequence switching updates frames and scene identity', async () => {
       const values = await page.locator('#sequence-select option').evaluateAll(nodes => nodes.map(n => n.value));
       await page.locator('#sequence-select').selectOption(values[1]);
       assert.equal(await page.locator('#frame-slider').inputValue(), '0');
-      assert.equal(await page.locator('#frame-slider').getAttribute('max'), '63');
+      assert.equal(await page.locator('#frame-slider').getAttribute('max'), String(driveLM.sequences[1].frames.length - 1));
+      assert((await page.locator('#scene-context').innerText()).includes(driveLM.sequences[1].temporal.sceneName.replace('scene-', '')));
       await page.locator('#sequence-select').selectOption(values[0]);
     });
     await check('Displayed overlap is computed from actual saved token IDs', async () => {
-      const response = await context.request.get(new URL('assets/data/demo.json', baseURL).href);
-      const data = await response.json();
-      const frame = data.datasets.find(d => d.id === 'drivelm').sequences[0].frames[0];
+      const frame = driveLM.sequences[0].frames[0];
       const baseline = new Set(frame.selection['10'].baseline.indices);
       const ours = frame.selection['10'].ours.indices;
       const shared = ours.filter(id => baseline.has(id)).length;
       assert.equal(Number(await page.locator('#shared-stat').innerText()), shared);
       assert.equal(Number(await page.locator('#unique-stat').innerText()), ours.length - shared);
     });
-    await check('Keyboard controls and wraparound boundaries', async () => {
+    await check('Keyboard controls stop at scene boundaries', async () => {
       await page.locator('#frame-slider').fill('0');
       await page.locator('#token-explorer').focus();
       await page.keyboard.press('ArrowLeft');
-      assert.equal(await page.locator('#frame-slider').inputValue(), '63');
-      await page.keyboard.press('ArrowRight');
       assert.equal(await page.locator('#frame-slider').inputValue(), '0');
       await page.keyboard.press('ArrowRight');
       assert.equal(await page.locator('#frame-slider').inputValue(), '1');
+      await page.locator('#frame-slider').fill(String(firstMax));
+      await page.keyboard.press('ArrowRight');
+      assert.equal(await page.locator('#frame-slider').inputValue(), String(firstMax));
+      await page.keyboard.press('ArrowLeft');
+      assert.equal(await page.locator('#frame-slider').inputValue(), String(firstMax - 1));
       await page.locator('#frame-slider').fill('0');
     });
     await check('Camera allocation displays real six-view counts', async () => {
@@ -108,8 +134,10 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
     await check('Hover shows the token ID at the actual grid coordinate', async () => {
       await page.waitForFunction(() => document.querySelector('#token-explorer').getAttribute('aria-busy') === 'false');
       const rect = await page.locator('#ours-canvas').boundingBox();
-      const x = rect.x + rect.width * (320 + (320 / 27) * 0.5) / 960;
-      const y = rect.y + rect.height * (20 + (180 / 27) * 0.5) / 400;
+      const frame = driveLM.sequences[0].frames[0];
+      const camera = frame.cameras.find(c => c.indexOffset === 0);
+      const x = rect.x + rect.width * (camera.x + camera.width / camera.cols * .5) / frame.width;
+      const y = rect.y + rect.height * (camera.y + camera.height / camera.rows * .5) / frame.height;
       await page.mouse.move(x, y);
       assert.match(await page.locator('#ours-tooltip').innerText(), /Token 0\b/);
       await page.mouse.move(0, 0);
@@ -135,21 +163,57 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
       await page.waitForTimeout(850);
       assert.equal(await page.locator('#frame-slider').inputValue(), stopped);
     });
+    await check('Playback finishes the scene and explicitly replays from its start', async () => {
+      const last = Number(await page.locator('#frame-slider').getAttribute('max'));
+      await page.locator('#frame-slider').fill(String(last - 2));
+      await page.locator('#play-button').click();
+      await page.waitForFunction(() => document.querySelector('#play-button').getAttribute('aria-pressed') === 'false');
+      assert.equal(await page.locator('#frame-slider').inputValue(), String(last));
+      assert.match(await page.locator('#play-button').getAttribute('aria-label'), /replay/i);
+      await page.waitForTimeout(600);
+      assert.equal(await page.locator('#frame-slider').inputValue(), String(last));
+      await page.locator('#play-button').click();
+      assert.equal(await page.locator('#frame-slider').inputValue(), '0');
+      await page.locator('#play-button').click();
+    });
+    await check('Scene time follows original timestamps and every sequence stays adjacent', async () => {
+      for (const dataset of demo.datasets) for (const sequence of dataset.sequences) {
+        assert.equal(sequence.temporal.strictConsecutive, true);
+        assert.equal(new Set(sequence.frames.map(frame => frame.temporal.sceneToken)).size, 1);
+        for (let i = 1; i < sequence.frames.length; i++) {
+          const previous = sequence.frames[i - 1].temporal, current = sequence.frames[i].temporal;
+          assert.equal(previous.nextSampleToken, current.sampleToken);
+          assert.equal(current.prevSampleToken, previous.sampleToken);
+          assert(current.timestampUs > previous.timestampUs);
+        }
+      }
+      assert(await page.locator('#scene-strip').isVisible());
+      assert.match(await page.locator('#scene-context').innerText(), /2\s*Hz/);
+      await page.locator('#frame-slider').fill('1');
+      assert.match(await page.locator('#frame-time').innerText(), /0\.5/);
+      await page.locator('#frame-slider').fill('0');
+    });
     await page.getByRole('tab', {name: 'DriveLM', exact: true}).click();
     await page.locator('#frame-slider').fill('0');
+    await page.waitForFunction(() => document.querySelector('#token-explorer').getAttribute('aria-busy') === 'false');
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path: path.join(output, 'screenshots', 'desktop.png'), fullPage: true});
     await page.locator('#token-explorer').screenshot({path: path.join(output, 'screenshots', 'explorer-drivelm.png')});
     await page.getByRole('tab', {name: 'DriveLMM-o1'}).click();
+    await page.waitForFunction(() => document.querySelector('#token-explorer').getAttribute('aria-busy') === 'false');
     await page.locator('#token-explorer').screenshot({path: path.join(output, 'screenshots', 'explorer-drivelmm.png')});
     await check('Desktop page has no horizontal overflow', async () => {
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    });
+    await check('Method section and its entry links are hidden', async () => {
+      assert.equal(await page.locator('#method').isVisible(), false);
+      assert.equal(await page.locator('a[href="#method"]:visible').count(), 0);
     });
     await check('Four actual clip previews and selection downloads', async () => {
       const gallery = page.locator('#clip-gallery');
       assert.equal(await gallery.locator('img').count(), 4);
       const downloadLinks = await gallery.locator('a[download]').evaluateAll(nodes => nodes.map(n => n.getAttribute('href')));
-      assert(downloadLinks.filter(url => url?.endsWith('.gif')).length === 4);
+      assert(downloadLinks.filter(url => url && new URL(url, baseURL).pathname.endsWith('.gif')).length === 4);
       for (const url of downloadLinks) {
         const response = await context.request.get(new URL(url, baseURL).href);
         assert.equal(response.status(), 200);
@@ -163,7 +227,7 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
       assert.equal(await play.getAttribute('aria-pressed'), 'true');
       await page.waitForFunction(() => {
         const image = document.querySelector('#clip-gallery img');
-        return image.src.endsWith('comparison.webp') && image.complete && image.naturalWidth > 0;
+        return new URL(image.src).pathname.endsWith('comparison.webp') && image.complete && image.naturalWidth > 0;
       });
       await play.click();
       assert.equal(await play.getAttribute('aria-pressed'), 'false');
@@ -181,6 +245,7 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
     });
     await page.setViewportSize({width: 390, height: 844});
     await page.getByRole('tab', {name: 'DriveLM', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('#token-explorer').getAttribute('aria-busy') === 'false');
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path: path.join(output, 'screenshots', 'mobile.png'), fullPage: true});
     await check('Mobile page has no horizontal overflow', async () => {
@@ -189,7 +254,7 @@ fs.mkdirSync(path.join(output, 'screenshots'), {recursive: true});
     await check('Mobile navigation opens and closes after a section link', async () => {
       await page.locator('.menu-toggle').click();
       assert.equal(await page.locator('.menu-toggle').getAttribute('aria-expanded'), 'true');
-      await page.locator('#site-nav a[href="#method"]').click();
+      await page.locator('#site-nav a[href="#results"]').click();
       assert.equal(await page.locator('.menu-toggle').getAttribute('aria-expanded'), 'false');
     });
     await check('Reduced motion does not autoplay the frame collection', async () => {

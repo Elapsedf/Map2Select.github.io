@@ -9,6 +9,7 @@ REPLACEMENTS = {
     "/home/defengzhou/.cache/huggingface/": "local-model-cache/",
     "/home/defengzhou/semantic/.venvs/": "local-environments/",
     "/tmp/map2select-media/": "media-export/",
+    "/tmp/map2select-temporal/": "temporal-export/",
     "/tmp/map2select-audit/": "audit/",
     "/home/defengzhou/": "local-home/",
 }
@@ -16,7 +17,7 @@ REPLACEMENTS = {
 
 def sanitize(value):
     if isinstance(value, dict):
-        return {key: sanitize(item) for key, item in value.items()}
+        return {sanitize(key): sanitize(item) for key, item in value.items()}
     if isinstance(value, list):
         return [sanitize(item) for item in value]
     if isinstance(value, str):

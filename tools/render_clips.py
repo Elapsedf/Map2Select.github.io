@@ -5,7 +5,8 @@ import json
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-COLORS = {"baseline": (233, 174, 103), "ours": (105, 217, 178)}
+COLORS = {"baseline": (239, 169, 54), "ours": (37, 190, 150)}
+LABEL_COLORS = {"baseline": "#966113", "ours": "#13785e"}
 
 
 def font(size):
@@ -22,7 +23,7 @@ def annotate(frame, method, budget):
     draw = ImageDraw.Draw(result, "RGBA")
     for camera in frame["cameras"]:
         x, y, w, h = (camera[key] for key in ("x", "y", "width", "height"))
-        draw.rectangle((x, y, x + w - 1, y + h - 1), fill=(8, 22, 17, 140))
+        draw.rectangle((x, y, x + w - 1, y + h - 1), fill=(8, 22, 17, 36))
         cell_w, cell_h = w / camera["cols"], h / camera["rows"]
         for row in range(camera["rows"]):
             for col in range(camera["cols"]):
@@ -44,18 +45,28 @@ def render(dataset, sequence, output, budget):
         panel_h = round(panel_w * frame["height"] / frame["width"])
         sheet = Image.new("RGB", (1280, panel_h + 88), "#f5f4ef")
         draw = ImageDraw.Draw(sheet)
-        draw.text((18, 12), f"{dataset['label']}  /  {sequence['title']}  /  {index + 1:02d} of {len(sequence['frames'])}", fill="#1b332a", font=font(15))
+        title = f"{sequence['title']}  /  {index + 1:02d} of {len(sequence['frames'])}"
+        if sequence.get("temporal") and frame.get("temporal"):
+            elapsed = frame["temporal"]["elapsedMs"] / 1000
+            duration = sequence["temporal"]["durationMs"] / 1000
+            title += f"  /  {elapsed:.1f} / {duration:.1f} s  /  {sequence['temporal']['sourceHz']} Hz"
+        draw.text((18, 12), title, fill="#1b332a", font=font(15))
         for position, method in enumerate(("baseline", "ours")):
             label = frame["selection"][budget][method]["label"]
             count = len(frame["selection"][budget][method]["indices"])
-            draw.text((position * panel_w + 18, 42), f"{label}  ·  {count} retained tokens", fill=COLORS[method], font=font(16))
+            draw.text((position * panel_w + 18, 42), f"{label}  ·  {count} retained tokens", fill=LABEL_COLORS[method], font=font(16))
             panel = annotate(frame, method, budget).resize((panel_w, panel_h), Image.Resampling.LANCZOS)
             sheet.paste(panel, (position * panel_w, 75))
         sheets.append(sheet)
     sheets[0].save(output / "poster.webp", quality=90)
-    sheets[0].save(output / "comparison.webp", save_all=True, append_images=sheets[1:], duration=450, loop=0, quality=72, method=4)
+    fallback = sequence.get("intervalMs", 500)
+    durations = [round(sequence["frames"][i + 1]["temporal"]["elapsedMs"] - frame["temporal"]["elapsedMs"])
+                 if i + 1 < len(sheets) and frame.get("temporal") else fallback
+                 for i, frame in enumerate(sequence["frames"])]
+    sheets[0].save(output / "comparison.webp", save_all=True, append_images=sheets[1:], duration=durations, loop=0, quality=72, method=4)
     gif_frames = [sheet.quantize(colors=128) for sheet in sheets]
-    gif_frames[0].save(output / "comparison.gif", save_all=True, append_images=gif_frames[1:], duration=450, loop=0, disposal=2, optimize=True)
+    gif_durations = [max(10, round(duration / 10) * 10) for duration in durations]
+    gif_frames[0].save(output / "comparison.gif", save_all=True, append_images=gif_frames[1:], duration=gif_durations, loop=0, disposal=2, optimize=True)
     with Image.open(output / "comparison.gif") as gif:
         if gif.n_frames != len(sheets):
             raise ValueError("Animation lost source frames")

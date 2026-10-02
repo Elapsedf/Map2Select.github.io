@@ -17,30 +17,40 @@ Open <http://localhost:8765>. Use an HTTP server; opening `index.html` with
 
 ## What is included
 
-- DriveLM and DriveLMM-o1, with two 64-frame collections each: 256 real examples.
+- DriveLM and DriveLMM-o1, with two continuous single-scene sequences each,
+  40 / 40 / 40 / 41 consecutive keyframes: 161 real frames in total.
 - Four paired GIFs, four smaller animated WebP previews, posters, and source frames.
-- Dataset and collection switching, synchronized frame scrubbing, playback,
+- Dataset and scene switching, synchronized frame scrubbing, playback,
   previous/next, keyboard shortcuts, and selected/original/difference views.
 - Token hover, grid and opacity controls, overlap statistics, and camera budget bars.
-- Supported 10% and 25% benchmark results, method explanation, and citation.
+- Supported 10% and 25% benchmark results and citation. The Method section and
+  its entry links are temporarily hidden at the user's request.
 - A responsive mobile layout, motion preferences, and a JavaScript-free clip gallery.
 - Downloadable retained token IDs and per-frame provenance.
 
-The website replays real decisions. It does not run a VLM or select tokens for
-new images. Collections contain distinct sampled images and are labeled as
-collections, rather than continuous driving videos.
+The website replays saved real decisions. Each animation follows the original
+nuScenes `sample.next` / `sample.prev` chain within one scene, with no skipped or
+interpolated keyframes. Native keyframes are sampled at approximately 2 Hz;
+the explorer shows the original relative timestamps and pauses at the end.
+GIFs repeat the same scene when they loop. The driving context stays visible
+under a light 14% overlay; colored borders identify retained tokens.
 
 ## Evidence
 
-DriveLM uses saved selections from a matched 400-question held-out development
-comparison: exact Map2Select versus Prune2Drive, 426 / 4,374 visual tokens.
-The score table separately reports the 15,480-question official test.
+Continuous clips use new isolated visualization traces, preserving the final
+selector configurations and model inputs. They are separate from answer
+generation and benchmark scoring. The earlier version sampled independent
+benchmark images across scenes; it was replaced after the user identified the
+scene changes.
 
-DriveLMM-o1 uses exact Map2Select decisions matched to the final frozen store and
-original full-test prediction records. Its strict Prune2Drive comparison was
-exported with an isolated prefill trace that stops after the selection hook,
-before any answer generation. The canonical 25-token ordered selection matches
-the independent historical strict trace. Both methods retain 25 / 256 tokens.
+DriveLM compares exact Map2Select with Prune2Drive at 426 / 4,374 tokens. Historical
+matched development masks provide selection parity anchors. The result table
+separately reports the 15,480-question official test.
+
+DriveLMM-o1 compares exact Map2Select with the strict Prune2Drive prefill hook at
+25 / 256 tokens. Historical frozen decisions and strict traces provide parity
+anchors. Continuous scenes include newly exported decisions on neighboring
+keyframes; they are not restricted to the frozen benchmark's sparse images.
 
 See [provenance](docs/PROVENANCE.md), [acceptance requirements](docs/ACCEPTANCE.md),
 and `assets/data/media-audit.json`. Visual comparisons illustrate selection
@@ -58,8 +68,9 @@ python -m pip install Pillow
 python tools/validate_site.py
 ```
 
-The validator checks all 256 image geometries and token sets, same-budget counts,
-all four 64-frame GIFs, resource paths, and supported result values.
+The validator checks every image geometry and token set, same-budget counts,
+single-scene source links, timestamps, all four GIFs, resource paths, and
+supported result values.
 
 For browser acceptance, install Playwright separately and use a system Chrome:
 

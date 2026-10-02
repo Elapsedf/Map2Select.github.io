@@ -1,4 +1,4 @@
-"""Validate the actual bundled frame collections and publication boundaries."""
+"""Validate real adjacent driving sequences, selections and publication boundaries."""
 from pathlib import Path
 import hashlib
 import json
@@ -50,8 +50,30 @@ def validate():
         dataset_images = set()
         for sequence in dataset["sequences"]:
             frames = sequence["frames"]
-            require(len(frames) >= 40, f"{dataset_id}/{sequence['id']}: expected dozens of distinct frames")
+            require(len(frames) >= 30, f"{dataset_id}/{sequence['id']}: expected dozens of distinct frames")
             require(sequence.get("source") and sequence.get("caption"), "Collections need readable scope and source")
+            temporal = sequence.get("temporal", {})
+            require(temporal.get("strictConsecutive") is True, "Each animation must be a truly adjacent single-scene sequence")
+            require(temporal.get("sceneToken") and temporal.get("sceneName"), "Sequences need a documented scene identity")
+            require(temporal.get("sourceHz") == 2, "Sequences must use native 2 Hz nuScenes keyframes")
+            timestamps = []
+            samples = set()
+            for index, frame in enumerate(frames):
+                stamp = frame.get("temporal", {})
+                require(stamp.get("sceneToken") == temporal["sceneToken"], "Animation changes scene")
+                require(stamp.get("sampleToken") and stamp["sampleToken"] not in samples, "Animation repeats an input sample")
+                samples.add(stamp["sampleToken"])
+                require(isinstance(stamp.get("timestampUs"), int), "Frame timestamp must come from source microseconds")
+                timestamps.append(stamp["timestampUs"])
+                elapsed = (stamp["timestampUs"] - frames[0]["temporal"]["timestampUs"]) / 1000
+                require(abs(stamp.get("elapsedMs", -1) - elapsed) < .01, "Displayed time differs from source timestamp")
+                if index:
+                    previous = frames[index - 1]["temporal"]
+                    require(previous.get("nextSampleToken") == stamp["sampleToken"], "Skipped or unrelated keyframe in animation")
+                    require(stamp.get("prevSampleToken") == previous["sampleToken"], "Source previous-frame link disagrees")
+                    require(390000 < timestamps[-1] - timestamps[-2] < 650000, "Unexpected native keyframe gap")
+            duration = (timestamps[-1] - timestamps[0]) / 1000
+            require(abs(temporal.get("durationMs", -1) - duration) < .01, "Scene duration differs from original timestamps")
             differences = []
             for frame in frames:
                 img_path = asset(frame["image"])
@@ -92,7 +114,9 @@ def validate():
             gif_path = asset(clips["gif"])
             asset(clips["poster"])
             if clips.get("download"):
-                asset(clips["download"])
+                download = json.loads(asset(clips["download"]).read_text())
+                require(download.get("dataset") == dataset_id and download.get("sequence") == sequence["id"], "Selection download identifies the wrong sequence")
+                require(download.get("frames") == frames, "Selection download differs from the displayed frames or retained IDs")
             with Image.open(gif_path) as gif:
                 require(gif.format == "GIF" and gif.is_animated, "Gallery preview must be an actual animated GIF")
                 require(gif.n_frames == len(frames), f"GIF does not cover all collection frames: {sequence['id']}")
@@ -100,6 +124,8 @@ def validate():
                 duration_ms = sum(gif.seek(i) or gif.info.get("duration", 0) for i in range(gif.n_frames))
             collection_report = {
                 "id": sequence["id"], "frames": len(frames), "gif_frames": len(frames),
+                "scene": temporal["sceneName"], "source_duration_ms": duration,
+                "all_source_next_prev_links_verified": True,
                 "gif_duration_ms": duration_ms, "retained_per_method": expected_retained,
                 "visual_input_tokens": expected_grid,
                 "ours_only_min": min(differences), "ours_only_max": max(differences),

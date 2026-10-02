@@ -4,11 +4,13 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const colors = { baseline: '#e9ae67', ours: '#69d9b2', shared: '#c4d0bd' };
-  const state = { datasets: [], dataset: null, sequence: null, frame: 0, budget: null, view: 'selected', opacity: .45, grid: false, image: null, selection: null, hovered: null, playing: false, playTimer: null, generation: 0, gallery: 'all' };
+  const assetVersion = '20261002-continuous';
+  const assetURL = value => typeof value === 'string' && value.startsWith('assets/') ? `${value}${value.includes('?') ? '&' : '?'}v=${assetVersion}` : value;
+  const colors = { baseline: '#efa936', ours: '#25be96', shared: '#c4d0bd' };
+  const state = { datasets: [], dataset: null, sequence: null, frame: 0, budget: null, view: 'selected', opacity: .45, grid: false, image: null, selection: null, hovered: null, playing: false, playTimer: null, replayUntil: 0, replayTimer: null, generation: 0, gallery: 'all' };
   const imageCache = new Map();
   const elements = {
-    explorer: $('#token-explorer'), tabs: $('#dataset-tabs'), sequence: $('#sequence-select'), budget: $('#budget-select'), slider: $('#frame-slider'), counter: $('#frame-counter'), play: $('#play-button'), previous: $('#previous-frame'), next: $('#next-frame'), status: $('#data-status'), gallery: $('#clip-gallery'), canvas: { baseline: $('#baseline-canvas'), ours: $('#ours-canvas') }
+    explorer: $('#token-explorer'), tabs: $('#dataset-tabs'), sequence: $('#sequence-select'), budget: $('#budget-select'), slider: $('#frame-slider'), counter: $('#frame-counter'), play: $('#play-button'), previous: $('#previous-frame'), next: $('#next-frame'), sceneStrip: $('#scene-strip'), sceneContext: $('#scene-context'), frameTime: $('#frame-time'), status: $('#data-status'), gallery: $('#clip-gallery'), canvas: { baseline: $('#baseline-canvas'), ours: $('#ours-canvas') }
   };
   const safeURL = value => {
     if (typeof value !== 'string' || !value.trim()) return null;
@@ -18,19 +20,46 @@
   const getFrame = () => state.sequence?.frames[state.frame];
   const cameraCells = frame => frame.cameras.reduce((sum, c) => sum + c.rows * c.cols, 0);
   const number = value => new Intl.NumberFormat('en-US').format(value);
-  function setStatus(message, retry = false) {
+  const isContinuous = sequence => sequence?.temporal?.strictConsecutive === true;
+  const sceneName = temporal => temporal.sceneName.replace(/^scene[-_\s]*/i, 'Scene ');
+  const seconds = milliseconds => (milliseconds / 1000).toFixed(1);
+  const sceneSummary = sequence => isContinuous(sequence) ? `${sceneName(sequence.temporal)} · ${Number(sequence.temporal.sourceHz.toFixed(2))} Hz · ${seconds(sequence.temporal.durationMs)} s` : '';
+  function setStatus(message, retry = false, kind = 'error') {
+    if (!retry && elements.status.textContent === (message || '') && elements.status.classList.contains('is-replay') === (kind === 'replay')) return;
     elements.status.replaceChildren();
+    elements.status.classList.toggle('is-replay', kind === 'replay');
     if (!message) return;
     elements.status.append(document.createTextNode(message));
     if (retry) { const button = node('button', '', 'Try again'); button.addEventListener('click', () => loadDemo()); elements.status.append(button); }
   }
+  function clearReplayNotice() { state.replayUntil = 0; clearTimeout(state.replayTimer); if (elements.status.classList.contains('is-replay')) setStatus(''); }
+  function announceReplay() {
+    state.replayUntil = Date.now() + 1600;
+    clearTimeout(state.replayTimer);
+    setStatus('Replay from start.', false, 'replay');
+    state.replayTimer = setTimeout(clearReplayNotice, 1600);
+  }
   function validateData(data) {
-    if (!Array.isArray(data.datasets) || !data.datasets.length) throw new Error('No frame collections were found in the demo data.');
+    if (!Array.isArray(data.datasets) || !data.datasets.length) throw new Error('No frame sequences were found in the demo data.');
     data.datasets.forEach(dataset => {
-      if (!dataset.id || !Array.isArray(dataset.sequences) || !dataset.sequences.length) throw new Error('A benchmark is missing its frame collections.');
+      if (!dataset.id || !Array.isArray(dataset.sequences) || !dataset.sequences.length) throw new Error('A benchmark is missing its frame sequences.');
       if (!Array.isArray(dataset.budgets) || !dataset.budgets.length) throw new Error(`${dataset.label} is missing its token budget.`);
       dataset.sequences.forEach(sequence => {
         if (!Array.isArray(sequence.frames) || !sequence.frames.length) throw new Error(`${sequence.title} has no frames.`);
+        if (isContinuous(sequence)) {
+          const temporal = sequence.temporal;
+          if (typeof temporal.sceneToken !== 'string' || !temporal.sceneToken || typeof temporal.sceneName !== 'string' || !temporal.sceneName || !Number.isFinite(temporal.sourceHz) || temporal.sourceHz <= 0 || !Number.isFinite(temporal.durationMs) || temporal.durationMs < 0) throw new Error(`${sequence.title} is missing its scene or timing information.`);
+          const samples = new Set();
+          sequence.frames.forEach((frame, index) => {
+            const current = frame.temporal, previous = sequence.frames[index - 1]?.temporal;
+            if (!current || current.sceneToken !== temporal.sceneToken || typeof current.sampleToken !== 'string' || !current.sampleToken || samples.has(current.sampleToken) || !Number.isSafeInteger(current.timestampUs) || !Number.isFinite(current.elapsedMs) || current.elapsedMs < 0) throw new Error(`${sequence.title} has invalid scene timestamps.`);
+            samples.add(current.sampleToken);
+            if (previous && (current.timestampUs <= previous.timestampUs || current.elapsedMs <= previous.elapsedMs || previous.nextSampleToken !== current.sampleToken || current.prevSampleToken !== previous.sampleToken)) throw new Error(`${sequence.title} is missing a consecutive scene frame.`);
+            const expectedElapsed = (current.timestampUs - sequence.frames[0].temporal.timestampUs) / 1000;
+            if (Math.abs(current.elapsedMs - expectedElapsed) > 1) throw new Error(`${sequence.title} has inconsistent frame timing.`);
+          });
+          if (Math.abs(sequence.frames.at(-1).temporal.elapsedMs - temporal.durationMs) > 1) throw new Error(`${sequence.title} has an inconsistent scene duration.`);
+        }
         sequence.frames.forEach(frame => {
           if (!safeURL(frame.image) || !(frame.width > 0 && frame.height > 0)) throw new Error(`Frame ${frame.id} is missing its source image or dimensions.`);
           if (!Array.isArray(frame.cameras) || !frame.cameras.length) throw new Error(`Frame ${frame.id} is missing its camera grid.`);
@@ -53,7 +82,7 @@
   }
   function imageFor(url) {
     if (imageCache.has(url)) return imageCache.get(url);
-    const promise = new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => { imageCache.delete(url); reject(new Error('This frame image could not be loaded.')); }; img.src = url; });
+    const promise = new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = () => { imageCache.delete(url); reject(new Error('This frame image could not be loaded.')); }; img.src = assetURL(url); });
     imageCache.set(url, promise);
     if (imageCache.size > 18) imageCache.delete(imageCache.keys().next().value);
     return promise;
@@ -72,6 +101,7 @@
     return { baseline, ours, shared, oursOnly: ours.size - shared.size, baselineOnly: baseline.size - shared.size };
   }
   function activateDataset(id, preservePlay = false) {
+    clearReplayNotice();
     if (!preservePlay) stopPlayback();
     state.dataset = state.datasets.find(ds => ds.id === id) || state.datasets[0];
     state.sequence = state.dataset.sequences[0]; state.frame = 0; state.budget = state.dataset.budgets[0].id;
@@ -87,12 +117,20 @@
     const max = state.sequence.frames.length - 1;
     elements.slider.max = max; elements.slider.value = state.frame; elements.slider.disabled = max === 0;
     elements.counter.textContent = `${String(state.frame + 1).padStart(2, '0')} / ${number(max + 1)}`;
-    elements.play.disabled = max === 0; elements.previous.disabled = max === 0; elements.next.disabled = max === 0;
-    elements.slider.setAttribute('aria-valuetext', `Frame ${state.frame + 1} of ${max + 1}: ${getFrame().id}`);
+    elements.play.disabled = max === 0; elements.previous.disabled = state.frame === 0; elements.next.disabled = state.frame === max;
+    const continuous = isContinuous(state.sequence);
+    elements.sceneStrip.hidden = !continuous;
+    elements.sceneContext.textContent = sceneSummary(state.sequence);
+    elements.frameTime.textContent = continuous ? `${seconds(getFrame().temporal.elapsedMs)} / ${seconds(state.sequence.temporal.durationMs)} s` : '';
+    elements.frameTime.setAttribute('aria-live', 'off');
+    elements.slider.setAttribute('aria-valuetext', `Frame ${state.frame + 1} of ${max + 1}${continuous ? `, ${sceneName(state.sequence.temporal)}, ${seconds(getFrame().temporal.elapsedMs)} seconds` : ''}`);
+    setPlayIcon(state.playing);
   }
   function selectFrame(index) {
     if (!state.sequence) return;
-    state.frame = (index + state.sequence.frames.length) % state.sequence.frames.length;
+    const next = Math.max(0, Math.min(index, state.sequence.frames.length - 1));
+    if (next === state.frame) { syncTimeline(); return; }
+    state.frame = next;
     syncTimeline(); renderFrame();
   }
   function updateFrameText(frame, selection, stats) {
@@ -105,10 +143,11 @@
     $('#shared-stat').textContent = `${number(stats.shared.size)}`;
     $('#unique-stat').textContent = `${number(stats.oursOnly)}`;
     const source = frame.source || state.sequence.source || state.dataset.source || frame.id;
-    const friendlySource = state.dataset.id === 'drivelm' ? 'Recorded DriveLM held-out dev frame · 6 camera views' : state.dataset.id === 'drivelmm' ? 'Recorded DriveLMM-o1 benchmark frame · 16 × 16 visual grid' : typeof source === 'object' ? source.label || source.path || frame.id : source;
+    const continuous = isContinuous(state.sequence);
+    const friendlySource = state.dataset.id === 'drivelm' ? `${continuous ? 'Continuous scene replay' : 'Recorded benchmark frame'} · 6 camera views` : state.dataset.id === 'drivelmm' ? `${continuous ? 'Continuous scene replay' : 'Recorded benchmark frame'} · 16 × 16 visual grid` : typeof source === 'object' ? source.label || source.path || frame.id : source;
     $('#frame-source').textContent = friendlySource;
     $('#frame-source').title = frame.id;
-    const note = state.dataset.id === 'drivelm' ? 'Saved selections from a matched 400-question held-out dev split. The results table uses official test scores.' : state.dataset.id === 'drivelmm' ? 'Frozen exact selections with a replayed strict decoder prefill selection trace. The results table uses full-test scores.' : state.sequence.protocol || state.dataset.protocol || '';
+    const note = state.sequence.protocol || state.dataset.protocol || '';
     $('#selection-note').textContent = `The overlay shows visual patch tokens, not object detections. ${note}`;
     const insight = frame.note || state.sequence.explanation || state.dataset.explanation;
     $('#frame-insight').hidden = !insight;
@@ -131,7 +170,7 @@
     state.selection = selection;
     const stats = selectionStats(selection);
     updateFrameText(frame, selection, stats);
-    setBusy(true); setStatus('');
+    setBusy(true); if (Date.now() < state.replayUntil) setStatus('Replay from start.', false, 'replay'); else setStatus('');
     try {
       const img = await imageFor(frame.image);
       if (generation !== state.generation) return;
@@ -139,8 +178,8 @@
       if (img.naturalWidth !== frame.width || img.naturalHeight !== frame.height) throw new Error('The source image dimensions do not match the recorded token grid.');
       for (const canvas of Object.values(elements.canvas)) canvas.parentElement.style.aspectRatio = `${frame.width} / ${frame.height}`;
       drawAll(); setBusy(false);
-      const next = state.sequence.frames[(state.frame + 1) % state.sequence.frames.length];
-      imageFor(next.image).catch(() => {});
+      const next = state.sequence.frames[state.frame + 1];
+      if (next) imageFor(next.image).catch(() => {});
       if (state.playing) scheduleNext();
     } catch (error) {
       if (generation !== state.generation) return;
@@ -169,15 +208,16 @@
     ctx.setTransform(canvas.width / frame.width, 0, 0, canvas.height / frame.height, 0, 0);
     ctx.drawImage(state.image, 0, 0, frame.width, frame.height);
     if (state.view !== 'raw') {
-      ctx.fillStyle = `rgba(8,22,17,${Math.min(.79, .37 + state.opacity * .53)})`; frame.cameras.forEach(camera => ctx.fillRect(camera.x, camera.y, camera.width, camera.height));
+      // Keep the driving context readable; the token borders carry the comparison.
+      ctx.fillStyle = `rgba(8,22,17,${Math.min(.25, .06 + state.opacity * .18)})`; frame.cameras.forEach(camera => ctx.fillRect(camera.x, camera.y, camera.width, camera.height));
       visitCells(frame, (index, x, y, w, h) => {
         if (!stats[method].has(index)) return;
         ctx.drawImage(state.image, x, y, w, h, x, y, w, h);
-        ctx.globalAlpha = state.opacity * .55;
+        ctx.globalAlpha = state.opacity * .42;
         ctx.fillStyle = state.view === 'difference' && stats.shared.has(index) ? colors.shared : colors[method];
         ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
-        ctx.strokeStyle = state.view === 'difference' && stats.shared.has(index) ? '#c4d0bd99' : method === 'baseline' ? '#edbd7fc9' : '#77ddbccc';
-        ctx.lineWidth = Math.max(.7, frame.width / cssWidth * .6); ctx.strokeRect(x + .45, y + .45, w - .9, h - .9);
+        ctx.strokeStyle = state.view === 'difference' && stats.shared.has(index) ? '#94a58bea' : method === 'baseline' ? '#e7a22bf2' : '#12ad85f2';
+        ctx.lineWidth = Math.max(.8, frame.width / cssWidth * .8); ctx.strokeRect(x + .45, y + .45, w - .9, h - .9);
       });
     }
     if (state.grid) {
@@ -226,13 +266,29 @@
     elements.canvas[method].addEventListener('pointerleave', () => { state.hovered = null; hideTooltips(); drawAll(); });
   }
   function setPlayIcon(playing) {
-    elements.play.setAttribute('aria-pressed', String(playing)); elements.play.setAttribute('aria-label', playing ? 'Pause frame collection' : 'Play frame collection');
+    const atEnd = state.sequence && state.frame === state.sequence.frames.length - 1;
+    const label = playing ? 'Pause sequence' : atEnd ? 'Replay scene' : 'Play sequence';
+    elements.play.setAttribute('aria-pressed', String(playing)); elements.play.setAttribute('aria-label', label); elements.play.title = label;
     const svg = $('svg', elements.play); svg.replaceChildren();
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', playing ? 'M5 4h4v12H5ZM12 4h4v12h-4Z' : 'm7 4 9 6-9 6Z'); svg.append(path);
   }
   function stopPlayback() { state.playing = false; clearTimeout(state.playTimer); setPlayIcon(false); }
-  function scheduleNext() { clearTimeout(state.playTimer); state.playTimer = setTimeout(() => { if (state.playing) selectFrame(state.frame + 1); }, state.sequence.intervalMs || 650); }
-  function togglePlayback() { if (!state.sequence || state.sequence.frames.length < 2) return; if (state.playing) { stopPlayback(); } else { state.playing = true; setPlayIcon(true); scheduleNext(); } }
+  function scheduleNext() {
+    clearTimeout(state.playTimer);
+    if (!state.playing) return;
+    const current = getFrame(), next = state.sequence.frames[state.frame + 1];
+    if (!next) { stopPlayback(); return; }
+    const delta = next.temporal?.elapsedMs - current.temporal?.elapsedMs;
+    const delay = Number.isFinite(delta) && delta > 0 ? delta : state.sequence.intervalMs || 500;
+    state.playTimer = setTimeout(() => { if (state.playing) selectFrame(state.frame + 1); }, delay);
+  }
+  function togglePlayback() {
+    if (!state.sequence || state.sequence.frames.length < 2) return;
+    if (state.playing) { stopPlayback(); return; }
+    state.playing = true; setPlayIcon(true);
+    if (state.frame === state.sequence.frames.length - 1) { announceReplay(); selectFrame(0); }
+    else scheduleNext();
+  }
   function initializeDemo(data) {
     state.datasets = validateData(data);
     elements.tabs.replaceChildren(...state.datasets.map((dataset, index) => {
@@ -246,7 +302,7 @@
   async function loadDemo() {
     setBusy(true); setStatus('');
     for (const method of ['baseline', 'ours']) $('.loading-orbit', $(`#${method}-placeholder`)).hidden = false;
-    try { const response = await fetch('assets/data/demo.json'); if (!response.ok) throw new Error(`Frame data could not be loaded (HTTP ${response.status}).`); initializeDemo(await response.json()); }
+    try { const response = await fetch(assetURL('assets/data/demo.json')); if (!response.ok) throw new Error(`Frame data could not be loaded (HTTP ${response.status}).`); initializeDemo(await response.json()); }
     catch (error) { setBusy(true, 'Frame data unavailable'); for (const method of ['baseline', 'ours']) $('.loading-orbit', $(`#${method}-placeholder`)).hidden = true; setStatus(`${error.message} Serve this page over HTTP to view its local assets.`, true); }
   }
   function renderGallery() {
@@ -254,7 +310,7 @@
     elements.gallery.replaceChildren();
     clips.forEach(({ dataset, sequence }) => {
       const clip = sequence.clips || {};
-      const gif = safeURL(clip.gif), animated = safeURL(clip.animatedWebp) || gif, poster = safeURL(clip.poster) || safeURL(sequence.frames[0]?.image);
+      const gif = assetURL(safeURL(clip.gif)), animated = assetURL(safeURL(clip.animatedWebp)) || gif, poster = assetURL(safeURL(clip.poster) || safeURL(sequence.frames[0]?.image));
       const card = node('figure', 'clip-card'), media = node('div', 'clip-media'), image = node('img');
       image.src = poster || gif; image.alt = `${dataset.label}, ${sequence.title}: synchronized baseline and Map2Select token selection comparison`; image.loading = 'lazy'; image.decoding = 'async';
       image.addEventListener('error', () => { media.replaceChildren(node('span', 'gallery-empty', 'This clip image is unavailable. Use the explorer or download the saved selections.')); });
@@ -267,13 +323,14 @@
       }
       const caption = node('figcaption'), heading = node('div', 'clip-heading');
       heading.append(node('h3', '', sequence.title), node('span', '', `${sequence.frames.length} FRAMES`));
-      const description = node('p', 'clip-caption', sequence.caption || sequence.description || 'A collection of recorded frame-level token selections.');
+      const description = node('p', 'clip-caption', sequence.caption || sequence.description || 'A sequence of recorded frame-level token selections.');
+      const scene = sceneSummary(sequence);
       const actions = node('div', 'clip-actions'), explore = node('button', '', 'Open in explorer ↗');
       explore.addEventListener('click', () => { activateDataset(dataset.id); state.sequence = sequence; state.frame = 0; elements.sequence.value = sequence.id; syncTimeline(); renderFrame(); $('#explorer').scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth', block: 'start' }); elements.sequence.focus({ preventScroll: true }); });
       actions.append(explore);
       if (gif) { const link = node('a', '', 'Download GIF ↓'); link.href = gif; link.download = `${dataset.id}-${sequence.id}.gif`; actions.append(link); }
-      if (safeURL(clip.download)) { const link = node('a', '', 'Selection data ↓'); link.href = clip.download; link.download = `${dataset.id}-${sequence.id}-selections.json`; actions.append(link); }
-      caption.append(heading, description, actions); card.append(media, caption); elements.gallery.append(card);
+      if (safeURL(clip.download)) { const link = node('a', '', 'Selection data ↓'); link.href = assetURL(clip.download); link.download = `${dataset.id}-${sequence.id}-selections.json`; actions.append(link); }
+      caption.append(heading); if (scene) caption.append(node('p', 'clip-scene', scene)); caption.append(description, actions); card.append(media, caption); elements.gallery.append(card);
     });
     if (!clips.length) elements.gallery.append(node('div', 'gallery-empty', 'No verified clips are available for this benchmark.'));
   }
@@ -313,17 +370,17 @@
       ...(safeURL(paper.pdf) ? [{ type: 'PAPER', title: 'Read the paper', href: paper.pdf }] : []),
       ...(safeURL(paper.code) ? [{ type: 'PROJECT REPOSITORY', title: 'Explore this project', href: paper.code }] : []),
       { type: 'SAVED SELECTIONS', title: 'Download frame & token data', href: 'assets/data/demo.json', download: true },
-      { type: 'ANIMATED COMPARISONS', title: 'View the four collections', href: '#sequences' }
+      { type: 'ANIMATED COMPARISONS', title: 'View the four sequences', href: '#sequences' }
     ];
     if (safeURL(paper.supplement)) resourceData.push({ type: 'SUPPLEMENT', title: 'Read the supplement', href: paper.supplement });
-    resourceData.forEach((resource, i) => { const a = node('a', 'resource-item'); a.href = resource.href; if (resource.download) a.download = 'map2select-demo-selections.json'; if (/^https?:/.test(resource.href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } a.append(node('span', 'resource-type', `${String(i + 1).padStart(2, '0')} · ${resource.type}`), node('strong', '', resource.title), node('span', '', resource.download ? '↓' : '↗')); resources.append(a); });
+    resourceData.forEach((resource, i) => { const a = node('a', 'resource-item'); a.href = assetURL(resource.href); if (resource.download) a.download = 'map2select-demo-selections.json'; if (/^https?:/.test(resource.href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } a.append(node('span', 'resource-type', `${String(i + 1).padStart(2, '0')} · ${resource.type}`), node('strong', '', resource.title), node('span', '', resource.download ? '↓' : '↗')); resources.append(a); });
     if (paper.citation) { $('#citation-section').hidden = false; $('#citation-code').textContent = paper.citation; }
   }
   async function loadResults() {
-    try { const response = await fetch('assets/data/results.json'); if (!response.ok) throw new Error(); renderResults(await response.json()); }
+    try { const response = await fetch(assetURL('assets/data/results.json')); if (!response.ok) throw new Error(); renderResults(await response.json()); }
     catch { $('#results-content').replaceChildren(node('p', 'result-loading', 'The verified results table could not be loaded. Refresh the page or inspect the project repository.')); }
   }
-  elements.sequence.addEventListener('change', () => { stopPlayback(); state.sequence = state.dataset.sequences.find(sequence => sequence.id === elements.sequence.value); state.frame = 0; syncTimeline(); renderFrame(); });
+  elements.sequence.addEventListener('change', () => { stopPlayback(); clearReplayNotice(); state.sequence = state.dataset.sequences.find(sequence => sequence.id === elements.sequence.value); state.frame = 0; syncTimeline(); renderFrame(); });
   elements.budget.addEventListener('change', () => { stopPlayback(); state.budget = elements.budget.value; renderFrame(); });
   elements.slider.addEventListener('input', () => { stopPlayback(); selectFrame(Number(elements.slider.value)); });
   elements.previous.addEventListener('click', () => { stopPlayback(); selectFrame(state.frame - 1); });
@@ -348,5 +405,5 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopPlayback(); });
   new ResizeObserver(() => drawAll()).observe(elements.explorer);
   loadDemo(); loadResults();
-  window.Map2SelectDemo = { getState: () => ({ dataset: state.dataset?.id, sequence: state.sequence?.id, frame: state.frame, budget: state.budget, view: state.view, playing: state.playing, grid: state.grid }), getSelectionStats: () => { if (!state.selection) return null; const stats = selectionStats(state.selection); return { baseline: stats.baseline.size, ours: stats.ours.size, shared: stats.shared.size, oursOnly: stats.oursOnly, baselineOnly: stats.baselineOnly }; } };
+  window.Map2SelectDemo = { getState: () => ({ dataset: state.dataset?.id, sequence: state.sequence?.id, frame: state.frame, budget: state.budget, view: state.view, playing: state.playing, grid: state.grid }), getTemporalState: () => isContinuous(state.sequence) ? { sceneName: state.sequence.temporal.sceneName, sourceHz: state.sequence.temporal.sourceHz, elapsedMs: getFrame().temporal.elapsedMs, durationMs: state.sequence.temporal.durationMs, atStart: state.frame === 0, atEnd: state.frame === state.sequence.frames.length - 1 } : null, getSelectionStats: () => { if (!state.selection) return null; const stats = selectionStats(state.selection); return { baseline: stats.baseline.size, ours: stats.ours.size, shared: stats.shared.size, oursOnly: stats.oursOnly, baselineOnly: stats.baselineOnly }; } };
 })();
