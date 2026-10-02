@@ -112,7 +112,8 @@ def validate():
             clips = sequence["clips"]
             require(clips.get("gif") and clips.get("poster"), f"Missing animation/poster for {sequence['id']}")
             gif_path = asset(clips["gif"])
-            asset(clips["poster"])
+            with Image.open(asset(clips["poster"])) as poster:
+                require(poster.size == (clips.get("width"), clips.get("height")), "Clip dimensions do not match the rendered poster")
             if clips.get("download"):
                 download = json.loads(asset(clips["download"]).read_text())
                 require(download.get("dataset") == dataset_id and download.get("sequence") == sequence["id"], "Selection download identifies the wrong sequence")

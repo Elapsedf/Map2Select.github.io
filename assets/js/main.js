@@ -4,7 +4,7 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const assetVersion = '20261002-continuous';
+  const assetVersion = '20261002-continuous2';
   const assetURL = value => typeof value === 'string' && value.startsWith('assets/') ? `${value}${value.includes('?') ? '&' : '?'}v=${assetVersion}` : value;
   const colors = { baseline: '#efa936', ours: '#25be96', shared: '#c4d0bd' };
   const state = { datasets: [], dataset: null, sequence: null, frame: 0, budget: null, view: 'selected', opacity: .45, grid: false, image: null, selection: null, hovered: null, playing: false, playTimer: null, replayUntil: 0, replayTimer: null, generation: 0, gallery: 'all' };
@@ -312,6 +312,7 @@
       const clip = sequence.clips || {};
       const gif = assetURL(safeURL(clip.gif)), animated = assetURL(safeURL(clip.animatedWebp)) || gif, poster = assetURL(safeURL(clip.poster) || safeURL(sequence.frames[0]?.image));
       const card = node('figure', 'clip-card'), media = node('div', 'clip-media'), image = node('img');
+      if (clip.width > 0 && clip.height > 0) { media.style.aspectRatio = `${clip.width} / ${clip.height}`; image.width = clip.width; image.height = clip.height; }
       image.src = poster || gif; image.alt = `${dataset.label}, ${sequence.title}: synchronized baseline and Map2Select token selection comparison`; image.loading = 'lazy'; image.decoding = 'async';
       image.addEventListener('error', () => { media.replaceChildren(node('span', 'gallery-empty', 'This clip image is unavailable. Use the explorer or download the saved selections.')); });
       media.append(image, node('span', 'clip-badge', dataset.label.toUpperCase()));
