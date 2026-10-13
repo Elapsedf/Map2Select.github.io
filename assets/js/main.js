@@ -337,7 +337,13 @@
   }
   function renderResults(data) {
     const paper = data.paper || {};
-    if (paper.title) { document.title = `${paper.title} · Project Demo`; $('#paper-subtitle').textContent = paper.title.replace(/^Map2Select:\s*/, ''); $('meta[name="description"]').content = paper.abstract || paper.title; $('meta[property="og:title"]').content = paper.title; }
+    if (paper.title) {
+      document.title = `${paper.title} · Project Demo`;
+      const titleParts = paper.title.replace(/^Map2Select:\s*/, '').split(/(\S+-\S+)/g);
+      $('#paper-subtitle').replaceChildren(...titleParts.map(part => part.includes('-') ? node('span', 'title-term', part) : document.createTextNode(part)));
+      $('meta[name="description"]').content = paper.abstract || paper.title;
+      $('meta[property="og:title"]').content = paper.title;
+    }
     if (paper.subtitle) $('.hero-description').textContent = 'Use projected HD maps as an external compute prior. Keep complementary visual evidence at a fixed token budget, without adding map tokens or retraining the VLM.';
     if (paper.abstract) $('#paper-abstract').textContent = paper.abstract;
     if (paper.version_note) $('.version-note').textContent = paper.version_note;
@@ -374,7 +380,7 @@
       { type: 'ANIMATED COMPARISONS', title: 'View the four sequences', href: '#sequences' }
     ];
     if (safeURL(paper.supplement)) resourceData.push({ type: 'SUPPLEMENT', title: 'Read the supplement', href: paper.supplement });
-    resourceData.forEach((resource, i) => { const a = node('a', 'resource-item'); a.href = assetURL(resource.href); if (resource.download) a.download = 'map2select-demo-selections.json'; if (/^https?:/.test(resource.href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } a.append(node('span', 'resource-type', `${String(i + 1).padStart(2, '0')} · ${resource.type}`), node('strong', '', resource.title), node('span', '', resource.download ? '↓' : '↗')); resources.append(a); });
+    resourceData.forEach(resource => { const a = node('a', 'resource-item'); a.href = assetURL(resource.href); if (resource.download) a.download = 'map2select-demo-selections.json'; if (/^https?:/.test(resource.href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } a.append(node('span', 'resource-type', resource.type), node('strong', '', resource.title), node('span', '', resource.download ? '↓' : '↗')); resources.append(a); });
     if (paper.citation) { $('#citation-section').hidden = false; $('#citation-code').textContent = paper.citation; }
   }
   async function loadResults() {

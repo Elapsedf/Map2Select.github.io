@@ -15,6 +15,15 @@ python -m http.server 8765 --bind 127.0.0.1
 Open <http://localhost:8765>. Use an HTTP server; opening `index.html` with
 `file://` does not allow the browser to fetch the local JSON data reliably.
 
+## Presentation
+
+The October 13 layout follows [Nerfies](https://nerfies.github.io/): a centered
+full manuscript title, dark rounded resource buttons, a white background,
+centered section headings, and a consistent content width. The interactive
+comparison leads into the continuous clip gallery, result tables, resources,
+and BibTeX. Mobile comparisons stack vertically. The Method section and all
+of its entry links remain hidden.
+
 ## What is included
 
 - DriveLM and DriveLMM-o1, with two continuous single-scene sequences each,
